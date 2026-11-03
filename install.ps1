@@ -1,59 +1,52 @@
-# Get the directory containing this script
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-
-# Install fortune if not already installed
-$rfortune = Join-Path $env:ProgramFiles "rfortune\rfortune.exe"
-
-if (-not (Test-Path $rfortune)) {
-
-    $tempDir = Join-Path $env:TEMP "rfortune"
-    $zipFile = Join-Path $env:TEMP "rfortune.zip"
-    $installDir = Join-Path $env:ProgramFiles "rfortune"
-
-    # Create temporary directory
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-    # Download rFortune
-    Invoke-WebRequest `
-        -Uri "https://github.com/umpire274/rFortune/releases/download/v0.5.6/rfortune-0.5.6-x86_64-pc-windows-msvc.zip" `
-        -OutFile $zipFile
-
-    # Extract it
-    Expand-Archive `
-        -LiteralPath $zipFile `
-        -DestinationPath $tempDir `
-        -Force
-
-    # Create installation directory
-    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-
-    # Install executable
-    Copy-Item `
-        -Path (Join-Path $tempDir "rfortune.exe") `
-        -Destination $rfortune `
-        -Force
-
-    # Clean up
-    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-    Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-
-    Write-Host "rFortune installed to $rfortune"
-}
+# Directory containing this script
+$scriptDir = $PSScriptRoot
 
 # Copy utilitylimb to APPDATA
-$source = Join-Path $scriptDir "utilitylimb"
-$dest = Join-Path $env:APPDATA "utilitylimb\utilitylimb"
+$source  = Join-Path $scriptDir "utilitylimb"
+$destDir = Join-Path $env:APPDATA "utilitylimb"
+$dest    = Join-Path $destDir "utilitylimb"
 
-if (-not (Test-Path $dest)) {
-    Copy-Item -Path $source -Destination $dest -Recurse
+if (-not (Test-Path -LiteralPath $source)) {
+    throw "Source file not found: $source"
 }
 
-# Append a call to rFortune in the profile (if not already present)
-$line = "& `"$rfortune`" --file $dest"
-
-if (-not (Select-String -Path $PROFILE -Pattern ([regex]::Escape($line)) -Quiet)) {
-    Add-Content -Path $PROFILE -Value $line
+if (-not (Test-Path -LiteralPath $dest)) {
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $dest -Recurse
 }
 
-# Initialize rfortune
-Invoke-Expression $line
+# The block that goes into the profile (single-quoted here-string: nothing is expanded now)
+$block = @'
+
+# --- fortune (utilitylimb) ---
+function fortune {
+    $path = "$env:APPDATA\utilitylimb\utilitylimb"
+    if (Test-Path -LiteralPath $path) {
+        $lines = Get-Content -LiteralPath $path |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and $_.Trim() -ne '%'
+            }
+        if ($lines) {
+            Write-Host ""
+            Write-Host (Get-Random -InputObject $lines) -ForegroundColor Cyan
+            Write-Host ""
+        }
+    }
+}
+
+fortune
+# --- end fortune ---
+'@
+
+# Make sure the profile file (and its folder) exist
+if (-not (Test-Path -LiteralPath $PROFILE)) {
+    New-Item -ItemType File -Path $PROFILE -Force | Out-Null
+}
+
+# Add to the profile only if not already there
+if (-not (Select-String -LiteralPath $PROFILE -Pattern '# --- fortune \(utilitylimb\) ---' -Quiet)) {
+    Add-Content -LiteralPath $PROFILE -Value $block
+}
+
+# Run it now
+Invoke-Expression $block
